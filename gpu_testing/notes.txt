@@ -1,0 +1,9 @@
+https://www.tensorflow.org/install/source
+
+
+
+Ok so....
+1. we have CUDA 12.2 according to nvidia-smi and nvcc --version
+2. we are using tensorflow 2.13.1 which is installed at /bin/python
+    This is our "global" python, but it is working perfectly so fuck it. 
+    This python version is 3.10.12 by using "/bin/python --version"
