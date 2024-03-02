@@ -43,13 +43,43 @@ from keras import layers
 import numpy as np
 
 
-def get_positional_encoding(max_seq_length, embed_dim):
+def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
+    """
+    Povides information about the position of each token in the sequence. 
+    Helps the transformer understand the order of the tokens
+
+    :params max_sequence_length: maximum length of sequence in dataset
+    :params embed_dim: dimensionality of the embeddings
+    :return: 
+    """
+    # create an array of shape (max_seq_length) where each element is its index. 
+    # assign a unique position number to each position in the sequence
     positions = np.arange(max_seq_length)[:, np.newaxis]
+
+    # Calculate the denominator part of the positional encoding. 
+    # creates varying wavelengths for sinusoidal functions, so each dimension
+    # of encoding varies at a different rate
     div_terms = np.exp(np.arange(0, embed_dim, 2) * -(np.log(10000.0) / embed_dim))
+    
+    # Create a matrix to be filled with encoding values
     pos_encoding = np.zeros((max_seq_length, embed_dim))
+
+    # Fills positional encoding matrix with sine values for even indicies. 
+    # We use sine because it provides a smooth gradient that can be easily differentiated.
+    # multiplication by div_terms ensure that dimension oscillates 
     pos_encoding[:, 0::2] = np.sin(positions * div_terms)
+
+    # Cosine used for odd values
     pos_encoding[:, 1::2] = np.cos(positions * div_terms)
+
+    # Add an extra dimension to the start of encoding matrix, 
+    # Facilitates easy addition to the embeddings matrix which may have a batch
+    # dimension
     pos_encoding = pos_encoding[np.newaxis, ...]
+
+    # Cast the positional encoding matrix to a tensor with a float32 type
+    # to make it more combatable with TensorFlow model and ready for adding to 
+    # embeddings. 
     return tf.cast(pos_encoding, dtype=tf.float32)
 
 
