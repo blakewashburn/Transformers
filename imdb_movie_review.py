@@ -47,9 +47,12 @@ def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
     Povides information about the position of each token in the sequence. 
     Helps the transformer understand the order of the tokens
 
-    :params max_sequence_length: maximum length of sequence in dataset
-    :params embed_dim: dimensionality of the embeddings
-    :return: Tensor of positional encodings of shape (1, max_seq_length, embed_dim)
+    Args: 
+    max_sequence_length: maximum length of sequence in dataset
+    embed_dim: dimensionality of the embeddings
+    
+    Returns:
+    tf.Tensor of positional encodings of shape (1, max_seq_length, embed_dim)
     """
     # create an array of shape (max_seq_length) where each element is its index. 
     # assign a unique position number to each position in the sequence
@@ -80,6 +83,51 @@ def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
     # to make it more combatable with TensorFlow model and ready for adding to 
     # embeddings. 
     return tf.cast(pos_encoding, dtype=tf.float32)
+    
+
+def scaled_dot_product_attention(q: tf.Tensor, k: tf.Tensor, v: tf.Tensor, 
+                                 mask: tf.Tensor = None) -> tf.Tensor:
+    """
+    Calculate the attenton score by scaling the dot products of the queries
+    and keys. which helps stabalize the gradients during training. Then, 
+    softmax is applied to obtain the weights on the values. 
+    q, k, v must have matching leading dimensions.
+    k, v must have matching penultimate dimensions
+
+    Args:
+    q: queries input tensor
+    k: keys input tensor
+    v: values input tensor
+    mask: Float tensor with shape (..., seq_len_q, seq_len_k)
+
+    Returns:
+    output: tf.tensor representing the 
+    attention_weights:
+    """
+
+    # Perform dot product of queries and keys
+    matmul_qk = tf.matmul(q, k, transpose_b=True)
+
+    # Scale matmul_qk by sqrt of depth of key vectors (dk)
+    # helps prevent the softmax function from having extremely small gradients
+    # during training
+    dk = tf.cast(tf.shape(k)[-1], tf.float32)
+    scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+
+    # Add the mask to the scaled tensor.
+    # Typically used to ignore padding tokens or prevent model from attending
+    # to future tokens 
+    if mask is not None:
+        scaled_attention_logits += (mask * -1e9)
+
+    # Apply softmax across keys for each query to obtain attention weights
+    # Weights add up to 1, so they can be seen as probabilities
+    attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1) 
+
+    # Attention weights are used to create a weighted sum of values
+    # producing the outputs of the attention mechanism
+    output = tf.matmul(attention_weights, v)
+    return output, attention_weights
 
 
 class MultiHeadAttention(layers.Layer):
@@ -96,8 +144,9 @@ class MultiHeadAttention(layers.Layer):
         """
         Initialize the MultiHeadAttention object
 
-        :params embed_dim: size of input embeddings
-        :params num_heads: number of attention heads
+        Args: 
+        embed_dim: size of input embeddings
+        num_heads: number of attention heads
         """
 
         # call constructor for the keras.layers.Layer object
@@ -128,9 +177,12 @@ class MultiHeadAttention(layers.Layer):
         Reshape the input matricies (Wq, Wk, Wv) so that the model can process the 
         data through multiple attention heads in parallel
 
-        :params x: one of the Wq, Wk, Wv matricies in self
-        :params batch_size: number of sequences processed in parallel
-        :return: 
+        Args: 
+        x: one of the Wq, Wk, Wv matricies in self
+        batch_size: number of sequences processed in parallel
+        
+        Returns:
+        tf.tensor that is reshaped to be ready for multi-head processing
         """
         # reshape input tensor to prepare for parallel processing by multiple 
         # attention heads. Original shape = (batch_size, seq_len, embed_dim). 
@@ -143,27 +195,54 @@ class MultiHeadAttention(layers.Layer):
         # because tensorflow works best with batch_size coming first. 
         return tf.transpose(x, perm=[0, 2, 1, 3])
     
-    def call(self, v, k, q):
+    def call(self, q: tf.Tensor, k: tf.Tensor, v: tf.Tensor) -> tf.Tensor:
         """
-        
+        Applies the multi-head attention mechanism to the inputs.
+        call() is automatically invoked when MultiHeadAttention is called on 
+        some input. 
+
+        Args:
+        q: queries input tensor
+        k: keys input tensor
+        v: values input tensor
+
+        Returns:
+        output: output tensor after attention application and concatination
         """
+
+        # Get batch_size from query tensor
         batch_size = tf.shape(q)[0]
         
-        q = self.Wq(q)  # (batch_size, seq_len, embed_dim)
+        # apply sense layers to their respective inputs. 
+        # Projects query, keys, values into spaces for attention mechanism
+        q = self.Wq(q) 
         k = self.Wk(k)
         v = self.Wv(v)
+        # resulting shape: (batch_size, seq_len, embed_dim)
         
-        q = self.split_heads(q, batch_size)  # (batch_size, num_heads, seq_len_q, depth)
-        k = self.split_heads(k, batch_size)  # (batch_size, num_heads, seq_len_k, depth)
-        v = self.split_heads(v, batch_size)  # (batch_size, num_heads, seq_len_v, depth)
+        # Split tensors into multiple heads
+        q = self.split_heads(q, batch_size) 
+        k = self.split_heads(k, batch_size) 
+        v = self.split_heads(v, batch_size)
+        # resulting shape: (batch_size, num_heads, seq_len, depth)
         
-        # scaled_attention, _ = scaled_dot_product_attention(q, k, v, mask)
-        # scaled_attention has shape (batch_size, num_heads, seq_len_q, depth)
+        # calculate the attention scores by scaling the dot product of queries
+        # and keys, applying a softmax to obtain weights, and then using these
+        # weights to aggregate the values
+        scaled_attention, _ = scaled_dot_product_attention(q, k, v, mask=None)
+        # resulting shape: (batch_size, num_heads, seq_len_q, depth)
+
         # Concatenate heads and run through final linear layer
-        scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])  # (batch_size, seq_len_q, num_heads, depth)
-        concat_attention = tf.reshape(scaled_attention, (batch_size, -1, self.embed_dim))  # (batch_size, seq_len_q, embed_dim)
-        output = self.dense(concat_attention)  # (batch_size, seq_len_q, embed_dim)
-        
+
+        # reshape to: (batch_size, seq_len_q, num_heads, depth)
+        scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
+
+        # concatinate the attention outputs from all heads back into a single tensor
+        concat_attention = tf.reshape(scaled_attention, (batch_size, -1, self.embed_dim))  
+        # Resulting shape: (batch_size, seq_len_q, embed_dim)
+
+        # Apply final dense layer to concatinated attnetion outputs
+        output = self.dense(concat_attention)
         return output
 
 
