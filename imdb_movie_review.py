@@ -38,7 +38,6 @@ Key Components of Transformers
 
 
 import tensorflow as tf
-from tensorflow import keras
 from keras import layers
 import numpy as np
 
@@ -50,7 +49,7 @@ def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
 
     :params max_sequence_length: maximum length of sequence in dataset
     :params embed_dim: dimensionality of the embeddings
-    :return: 
+    :return: Tensor of positional encodings of shape (1, max_seq_length, embed_dim)
     """
     # create an array of shape (max_seq_length) where each element is its index. 
     # assign a unique position number to each position in the sequence
@@ -59,7 +58,7 @@ def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
     # Calculate the denominator part of the positional encoding. 
     # creates varying wavelengths for sinusoidal functions, so each dimension
     # of encoding varies at a different rate
-    div_terms = np.exp(np.arange(0, embed_dim, 2) * -(np.log(10000.0) / embed_dim))
+    div_terms = np.exp(np.arange(0, embed_dim, 2) * - (np.log(10000.0) / embed_dim))
     
     # Create a matrix to be filled with encoding values
     pos_encoding = np.zeros((max_seq_length, embed_dim))
@@ -84,25 +83,70 @@ def get_positional_encoding(max_seq_length: int, embed_dim: int) -> tf.Tensor:
 
 
 class MultiHeadAttention(layers.Layer):
-    def __init__(self, embed_dim, num_heads):
+    """
+    Enables the model to simultaniously process information from different 
+    subspaces at different positions by splitting the attention mechanism
+    into multiple heads. So it focuses on different parts of the input sequence
+    for a given output part. 
+
+    Inherits from TensorFlow's layers.Layer object. 
+    """
+
+    def __init__(self, embed_dim: int, num_heads: int):
+        """
+        Initialize the MultiHeadAttention object
+
+        :params embed_dim: size of input embeddings
+        :params num_heads: number of attention heads
+        """
+
+        # call constructor for the keras.layers.Layer object
         super(MultiHeadAttention, self).__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        assert embed_dim % num_heads == 0, "Embedding dimension should be divisible by number of heads"
-        
+
+        # ensure that embedding dimensions are divisible by number of heads
+        # The model splits the embeddings into equal parts for each head
+        assert embed_dim % num_heads == 0
+
+        # calculate the depth of each attention head's output. 
+        # Each head deals with this number of embedding dimensions.      
         self.depth = embed_dim // num_heads
         
-        self.Wq = layers.Dense(embed_dim)
-        self.Wk = layers.Dense(embed_dim)
-        self.Wv = layers.Dense(embed_dim)
+        # Initialize dense layers that will be used to generate queries
+        # keys, and values for the attention mechanisms. 
+        self.Wq = layers.Dense(embed_dim)   # weights applied to queries
+        self.Wk = layers.Dense(embed_dim)   # weights applied to keys
+        self.Wv = layers.Dense(embed_dim)   # weights applied to values
+
+        # Create a dense layer that will be used to transform the concatinated
+        # outputs of the attention heads back into the original embedding dimensions
         self.dense = layers.Dense(embed_dim)
     
-    def split_heads(self, x, batch_size):
-        """Split the last dimension into (num_heads, depth)."""
+    def split_heads(self, x: tf.Tensor, batch_size: int) -> tf.Tensor:
+        """
+        Reshape the input matricies (Wq, Wk, Wv) so that the model can process the 
+        data through multiple attention heads in parallel
+
+        :params x: one of the Wq, Wk, Wv matricies in self
+        :params batch_size: number of sequences processed in parallel
+        :return: 
+        """
+        # reshape input tensor to prepare for parallel processing by multiple 
+        # attention heads. Original shape = (batch_size, seq_len, embed_dim). 
+        # New shape is (batch_size, seq_len, num_heads, depth)
+        # This reshaping enables each attention head to process a different part
+        # of the embedding space independently
         x = tf.reshape(x, (batch_size, -1, self.num_heads, self.depth))
+
+        # reshapes the tensor dimensions to (batch_size, num_heads, seq_len, depth)
+        # because tensorflow works best with batch_size coming first. 
         return tf.transpose(x, perm=[0, 2, 1, 3])
     
     def call(self, v, k, q):
+        """
+        
+        """
         batch_size = tf.shape(q)[0]
         
         q = self.Wq(q)  # (batch_size, seq_len, embed_dim)
