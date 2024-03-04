@@ -248,7 +248,19 @@ class MultiHeadAttention(layers.Layer):
 
 
 class TransformerEncoderLayer(layers.Layer):
+    """
+    Layer within the Transformer that contains multi-head self-attention, 
+    position-wise feed forward networks, normalization, and residual connections. 
+
+    Processes input sequences into higher-level representations by allowing each
+    position to attend to all positions in previous layer
+
+    Inherits the keras.layers.Layer object
+    """
     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+        """
+        Initialize an encoding layer within the Transformer architecture
+        """
         super(TransformerEncoderLayer, self).__init__()
         self.mha = MultiHeadAttention(embed_dim, num_heads)
         self.ffn = tf.keras.Sequential([
