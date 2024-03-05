@@ -1,10 +1,8 @@
 """
 Blake Washburn
 
-IMDb movie review classifier
-
-This code classifies the movie reviews in the TensorFlow dataset (TFDS) into 
-two classes, positive and negative. 
+This file contains the implementation of the Transformers that we will use 
+in other practice files
 
 Notes: 
 - The core concept behind transformers is the self-attention mechanism, which 
@@ -13,6 +11,12 @@ differently.
 - This is a departure from RNNs and CNNs, which process data sequentially or 
 through local receptive fields, respectively. 
 - Transformers can handle long-range dependencies in data more effectively.
+- Decoder is optional in Transformer-based models depending on the task. 
+- Encoder-only models are usable for sentence embedding, text classification, 
+and entity recognition, where the goal is to understand/catagorize input.
+- Adding decoder enables ability to generate output sequences based on encoded
+representation. Better for sequence-to-sequence tasks such as machine
+translation, text summarization, and image captioning. 
 
 Key Components of Transformers
 1. Embeddings
@@ -22,11 +26,11 @@ Key Components of Transformers
     - Since transformers do not process data sequentially, we need to provide
     some information about the position of tokens in the sequence. 
     - This is done through positional encodings added to the embeddings
-3. Self Attention: 
+3. Self-Attention: 
     - Allows the model to focus on different parts of the input sequence when
     producing a specific part of the output sequence. 
 4. Multi-Head Attension: 
-    - An extension of self-attention, where the attention mechanism is run in
+    - An extension of self-attention, where the attention mechanism is run
     multiple times to allow the model to jointly attend to information from 
     different representation subspaces. 
 5. Feed-Forward Neural Networks: 
@@ -257,57 +261,133 @@ class TransformerEncoderLayer(layers.Layer):
 
     Inherits the keras.layers.Layer object
     """
-    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+    def __init__(self, embed_dim: int, num_heads: int, ff_dim: int, 
+                 rate: float = 0.1):
         """
         Initialize an encoding layer within the Transformer architecture
+
+        Args: 
+        embed_dim: size of input embeddings
+        num_heads: number of attention heads
+        ff_dim: the dimensionality of the inner layer of the feed forward network
+        rate: dropout rate
         """
         super(TransformerEncoderLayer, self).__init__()
+
+        # define multi-head attension layer
         self.mha = MultiHeadAttention(embed_dim, num_heads)
+        
+        # define two-layer feed forward network. First layer expands to ff_dim
+        # dimension while second layer projects back to original embedding dimension
         self.ffn = tf.keras.Sequential([
             layers.Dense(ff_dim, activation="relu"),
             layers.Dense(embed_dim)
         ])
         
+        # initialize normalization and dropout layer.
+        # one of each for after MHA layer and after FFN layer
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
-        
         self.dropout1 = layers.Dropout(rate)
         self.dropout2 = layers.Dropout(rate)
     
-    def call(self, inputs, training):
-        attn_output = self.mha(inputs, inputs, inputs)  # Self attention
+    def call(self, inputs: tf.Tensor, training: bool) -> tf.Tensor:
+        """
+        Applies transformer encoding layer to inputs
+
+        Args:
+        inputs: input tensor of shape (batch_size, seq_len, embed_dim)
+        training: boolean indicating whether the layer is being called during training
+
+        Returns:
+        out2: output tensor from the encoding layer
+        """
+
+        # In self-attention, the same input is used for queries, keys, values
+        attn_output = self.mha(inputs, inputs, inputs)
         attn_output = self.dropout1(attn_output, training=training)
+
+        # Add input tensor to attention output to create residual connection
+        # helps mitigate the vanishing gradient problem by allowing gradients
+        # to flow directly through the network
         out1 = self.layernorm1(inputs + attn_output)
         
+        # Pass through FFN, processing each position independently
         ffn_output = self.ffn(out1)
         ffn_output = self.dropout2(ffn_output, training=training)
-        out2 = self.layernorm2(out1 + ffn_output)
-        
+        out2 = self.layernorm2(out1 + ffn_output)   # another residual connection
         return out2
 
 
+class BinaryClassTransformerWithoutDecoder(tf.keras.Model):
+    """
+    Embodiment of the Transformer model. 
+    Encoder maps an input sequence to a sequence of continuous representations.
+    This Class performs Binary classification without the use of a decoder. 
+    
+    Inherits from the tf.keras.Model class
+    """
+    def __init__(self, num_layers: int, embed_dim: int, num_heads: int, 
+                 ff_dim: int, input_vocab_size: int, 
+                 maximum_position_encoding: int, rate: float = 0.1):
+        """
+        Initialize the Transformer model
 
-class Transformer(tf.keras.Model):
-    def __init__(self, num_layers, embed_dim, num_heads, ff_dim, input_vocab_size, maximum_position_encoding, rate=0.1):
-        super(Transformer, self).__init__()
+        Args: 
+        num_layers: number of encoding (and decoding, if applicable) layers
+        embed_dim: dimensionality of the input and output of token embeddings
+        num_heads: number of attention heads within each attention layer
+        ff_dim: the dimensionality of the inner layer of the feed forward network
+        input_vocab_size: number of unique tokens that can be processed
+        maximum_position_encoding: max sequence length the model can handle
+        rate: dropout rate
+        """
+        super(BinaryClassTransformerWithoutDecoder, self).__init__()
+
+        # init embedding layer that converts tokens into embeddings
+        # vital for processing discrete tokens into continuous vectors
         self.token_embedding = layers.Embedding(input_vocab_size, embed_dim)
+
+        # generate positional encoding matrix. Adds information about the sequence
+        # of the tokens. 
         self.pos_encoding = get_positional_encoding(maximum_position_encoding, embed_dim)
         
-        self.encoder_layers = [TransformerEncoderLayer(embed_dim, num_heads, ff_dim, rate) for _ in range(num_layers)]
+        # list of encoding layers
+        self.encoder_layers = [TransformerEncoderLayer(embed_dim, num_heads, ff_dim, rate) 
+                               for _ in range(num_layers)]
         
+        # dropout and classification layer
         self.dropout = layers.Dropout(rate)
-        self.final_layer = layers.Dense(1)  # Assuming binary classification for simplicity
+        self.final_layer = layers.Dense(1)
     
-    def call(self, inputs, training):
+    def call(self, inputs: tf.Tensor, training: bool) -> tf.Tensor:
+        """
+        Invoked when Transformer is called to some input.
+        Orchestrates how input data flows through the model 
+
+        Args:
+        inputs: a tensor of token indices with shape (batch_size, seq_len)
+        training: Flag indicating what mode the model is being used in
+
+        Returns:
+        x: tensor of shape (batch_size, 1), where each element represents
+            the model's prediction for the corresponding sequence in the batch
+        """
+        # grab the seq_len for applying positional encodings correctly
         seq_len = tf.shape(inputs)[1]
-        x = self.token_embedding(inputs)  # (batch_size, input_seq_len, embed_dim)
+
+        # Apply the token embedding layer to the input tensor, converting each
+        # token index into a dense vector of size (emded_dim)
+        x = self.token_embedding(inputs)
+
+        # Add positional encodings to the token embeddings.
         x += self.pos_encoding[:, :seq_len, :]
-        
         x = self.dropout(x, training=training)
         
+        # sequentially pass input through each encoding layer
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x, training)
         
-        x = self.final_layer(x[:, 0, :])  # Take the encoding of the first token for classification
-        
+        # Take the encoding of the first token for classification
+        x = self.final_layer(x[:, 0, :])  
         return x
