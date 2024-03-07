@@ -103,8 +103,6 @@ print(type(train_encodings))
 print(train_encodings.keys())
 print(train_encodings)
 
-# exit()
-
 
 # Prepare labels 
 train_labels = np.array(train_labels)
